@@ -74,6 +74,11 @@ canvas{width:100%;height:180px;border-radius:12px;background:#fafaf8}.danger{col
   </section>
 
   <section class="card">
+    <div class="row"><h2 style="font-size:18px;margin:0">達成度の記録</h2><span class="small">日ごとの達成状況</span></div>
+    <div id="scoreHistory" class="history"></div>
+  </section>
+
+  <section class="card">
     <div class="row"><h2 style="font-size:18px;margin:0">今日の運動</h2><b id="workoutScore" class="small">0/0 完了</b></div>
     <div class="small" style="margin:4px 0 10px">筋トレA/Bは自動で交互になります。変更したい時だけ下のメニューで選んでください。毎日3kmウォーキングも固定で入っています。</div>
     <select id="dayType" onchange="renderWorkout()"><option value="A">筋トレ A</option><option value="B">筋トレ B</option><option value="surf">サーフィン</option><option value="rest">休養</option></select>
@@ -294,13 +299,24 @@ function saveWeight(){
  data.weights.push({date:today(),weight:v}); data.weights.sort((a,b)=>a.date.localeCompare(b.date)); persist(); document.getElementById('weightInput').value=''; render();
 }
 function saveChecks(){
- const ids=['protein','water','calorie','exercise','sleep']; data.checks[today()]={}; ids.forEach(id=>data.checks[today()][id]=document.getElementById(id).checked); persist(); updateScore();
+ const ids=['protein','water','calorie','exercise','sleep']; data.checks[today()]={}; ids.forEach(id=>data.checks[today()][id]=document.getElementById(id).checked); persist(); updateScore(); renderScoreHistory();
 }
 function loadToday(){
  const c=data.checks[today()]||{}; ['protein','water','calorie','exercise','sleep'].forEach(id=>document.getElementById(id).checked=!!c[id]);
  document.getElementById('dayType').value=data.types[today()]||autoDayType(today()); renderWorkout(); updateScore();
  renderFood();
  renderExerciseHistory();
+ renderScoreHistory();
+}
+function renderScoreHistory(){
+ const el=document.getElementById('scoreHistory'); if(!el) return;
+ const ids=['protein','water','calorie','exercise','sleep'];
+ const dates=Object.keys(data.checks||{}).sort().reverse().slice(0,30);
+ el.innerHTML=dates.map(d=>{
+  const c=data.checks[d]||{};
+  const n=ids.filter(x=>c[x]).length;
+  return `<div class="hist"><span>${fmtDate(d)}</span><b>${n}/5 達成</b></div>`;
+ }).join('')||'<div class="small" style="padding:10px 0">まだ記録がありません。</div>';
 }
 function updateScore(){
  const ids=['protein','water','calorie','exercise','sleep']; const c=data.checks[today()]||{}; const n=ids.filter(x=>c[x]).length; const pct=Math.round(n/5*100);
@@ -428,5 +444,18 @@ function drawNutritionChart(){
 }
 function resetAll(){if(confirm('記録を全部消しますか？')){localStorage.removeItem(KEY);location.reload()}}
 loadToday();render();
+
+// 0時をまたいだら自動で「今日」の表示をリセットする
+let currentDate=today();
+function checkDateChange(){
+ if(today()!==currentDate){
+  currentDate=today();
+  loadToday();
+  render();
+ }
+}
+setInterval(checkDateChange,30000);
+document.addEventListener('visibilitychange',()=>{ if(!document.hidden) checkDateChange(); });
+
 </script>
 </body></html>
