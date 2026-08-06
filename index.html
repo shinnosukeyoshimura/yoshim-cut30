@@ -16,6 +16,7 @@ button{border:0;border-radius:12px;padding:11px 14px;font-weight:700;background:
 .bar{height:10px;background:#e7e7e3;border-radius:99px;overflow:hidden}.fill{height:100%;background:#171717;border-radius:99px}.small{font-size:12px;color:#777}
 .history{max-height:220px;overflow:auto}.hist{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #eee;font-size:13px}
 .workout h3{margin:0 0 8px}.exercise{padding:10px 0;border-bottom:1px solid #eee}.exercise:last-child{border:0}
+.exCheck{align-items:flex-start}.exCheck input{margin-top:2px}
 canvas{width:100%;height:180px;border-radius:12px;background:#fafaf8}.danger{color:#a33}.note{font-size:11px;color:#777;line-height:1.5}
 .foodAddRow{display:flex;gap:8px;position:relative}.foodAddRow input{flex:1}
 .suggestBox{position:absolute;top:calc(100% + 4px);left:0;right:0;background:#fff;border:1px solid #ddd;border-radius:12px;box-shadow:0 6px 20px #00000018;z-index:20;max-height:240px;overflow:auto}
@@ -69,8 +70,15 @@ canvas{width:100%;height:180px;border-radius:12px;background:#fafaf8}.danger{col
   </section>
 
   <section class="card">
-    <div class="row"><h2 style="font-size:18px;margin:0">今日の運動</h2><select id="dayType" onchange="renderWorkout()"><option value="A">筋トレ A</option><option value="B">筋トレ B</option><option value="surf">サーフィン</option><option value="rest">休養</option></select></div>
-    <div class="workout" id="workout"></div>
+    <div class="row"><h2 style="font-size:18px;margin:0">今日の運動</h2><b id="workoutScore" class="small">0/0 完了</b></div>
+    <div class="small" style="margin:4px 0 10px">筋トレA/Bは自動で交互になります。変更したい時だけ下のメニューで選んでください。毎日3kmウォーキングも固定で入っています。</div>
+    <select id="dayType" onchange="renderWorkout()"><option value="A">筋トレ A</option><option value="B">筋トレ B</option><option value="surf">サーフィン</option><option value="rest">休養</option></select>
+    <div class="workout" id="workout" style="margin-top:12px"></div>
+  </section>
+
+  <section class="card">
+    <div class="row"><h2 style="font-size:18px;margin:0">運動の記録</h2><span class="small">日ごとの達成状況</span></div>
+    <div id="exerciseHistory" class="history"></div>
   </section>
 
   <section class="card">
@@ -113,6 +121,16 @@ canvas{width:100%;height:180px;border-radius:12px;background:#fafaf8}.danger{col
   </section>
 
   <section class="card">
+    <h2 style="font-size:18px;margin:0 0 6px">カロリー・タンパク質の推移</h2>
+    <div class="row small" style="gap:14px;margin-bottom:8px">
+      <span><span style="display:inline-block;width:10px;height:10px;background:#171717;border-radius:2px;margin-right:4px;vertical-align:middle"></span>カロリー(棒・目安1700-1800)</span>
+      <span><span style="display:inline-block;width:10px;height:10px;background:#287a4b;border-radius:50%;margin-right:4px;vertical-align:middle"></span>タンパク質(線・目安130-150)</span>
+    </div>
+    <canvas id="nutriChart" width="528" height="180"></canvas>
+    <div class="small" style="margin-top:8px">※食事を記録した日のみ表示されます。左の数字＝カロリー(kcal)、右の数字＝タンパク質(g)の目盛りです。</div>
+  </section>
+
+  <section class="card">
     <div class="row"><h2 style="font-size:18px;margin:0">記録履歴</h2><span class="small">この端末に保存</span></div>
     <div id="history" class="history"></div>
   </section>
@@ -121,8 +139,9 @@ canvas{width:100%;height:180px;border-radius:12px;background:#fafaf8}.danger{col
 </div>
 <script>
 const KEY="yoshim_cut30_v2";
-let data=JSON.parse(localStorage.getItem(KEY)||'{"weights":[],"checks":{},"foodItems":{},"types":{}}');
+let data=JSON.parse(localStorage.getItem(KEY)||'{"weights":[],"checks":{},"foodItems":{},"types":{},"exerciseChecks":{}}');
 if(!data.foodItems) data.foodItems={};
+if(!data.exerciseChecks) data.exerciseChecks={};
 const today=()=>new Date().toISOString().slice(0,10);
 function persist(){localStorage.setItem(KEY,JSON.stringify(data))}
 
@@ -233,6 +252,7 @@ function renderFood(){
    </div>
   </div>
  `).join('') || '<div class="small" style="padding:10px 0">まだ記録がありません。</div>';
+ drawNutritionChart();
 }
 
 // クリック外で候補を閉じる
@@ -250,20 +270,63 @@ function saveChecks(){
 }
 function loadToday(){
  const c=data.checks[today()]||{}; ['protein','water','calorie','exercise','sleep'].forEach(id=>document.getElementById(id).checked=!!c[id]);
- document.getElementById('dayType').value=data.types[today()]||'A'; renderWorkout(); updateScore();
+ document.getElementById('dayType').value=data.types[today()]||autoDayType(today()); renderWorkout(); updateScore();
  renderFood();
+ renderExerciseHistory();
 }
 function updateScore(){
  const ids=['protein','water','calorie','exercise','sleep']; const c=data.checks[today()]||{}; const n=ids.filter(x=>c[x]).length; const pct=Math.round(n/5*100);
  document.getElementById('score').textContent=pct+'%';document.getElementById('scoreBar').style.width=pct+'%';
 }
+const WORKOUT_SETS={
+ A:[['スクワット','15回 × 3'],['腕立て伏せ','10〜15回 × 3'],['ブルガリアンスクワット','左右10回 × 3'],['パイクプッシュアップ','8〜12回 × 3'],['プランク','45〜60秒 × 3']],
+ B:[['スロースクワット','10回 × 3（3秒で下ろす）'],['腕立て伏せ','限界の2回手前 × 3'],['リバースランジ','左右10回 × 3'],['ヒップリフト','15〜20回 × 3'],['レッグレイズ','10〜15回 × 3']],
+ surf:[['サーフィン','いつものセッション'],['サーフィン前','1〜2時間前におにぎり＋バナナなど'],['サーフィン後','タンパク質＋炭水化物を補給']],
+ rest:[['休養','軽いストレッチや散歩だけでOK']]
+};
+function getExercises(type){
+ return (WORKOUT_SETS[type]||[]).concat([['ウォーキング','3km（毎日の習慣）']]);
+}
+function typeLabel(t){return {A:'筋トレA',B:'筋トレB',surf:'サーフィン',rest:'休養'}[t]||t}
+function autoDayType(dateStr){
+ const d=new Date(dateStr+'T00:00:00');
+ const dayNum=Math.floor(d.getTime()/86400000);
+ return dayNum%2===0 ? 'A':'B';
+}
 function renderWorkout(){
  const type=document.getElementById('dayType').value; data.types[today()]=type; persist();
- const sets={A:[['スクワット','15回 × 3'],['腕立て伏せ','10〜15回 × 3'],['ブルガリアンスクワット','左右10回 × 3'],['パイクプッシュアップ','8〜12回 × 3'],['プランク','45〜60秒 × 3']],
- B:[['スロースクワット','10回 × 3（3秒で下ろす）'],['腕立て伏せ','限界の2回手前 × 3'],['リバースランジ','左右10回 × 3'],['ヒップリフト','15〜20回 × 3'],['レッグレイズ','10〜15回 × 3']],
- surf:[['サーフィン','いつものセッション'],['前','1〜2時間前におにぎり＋バナナなど'],['後','タンパク質＋炭水化物を補給']],
- rest:[['休養','軽いストレッチや散歩だけでOK']]};
- document.getElementById('workout').innerHTML=sets[type].map(x=>`<div class="exercise"><b>${x[0]}</b><div class="small">${x[1]}</div></div>`).join('');
+ const list=getExercises(type);
+ const checks=data.exerciseChecks[today()]||{};
+ document.getElementById('workout').innerHTML=list.map(x=>{
+  const key=x[0];
+  const checked=checks[key]?'checked':'';
+  const safeKey=key.replace(/'/g,"\\'");
+  return `<div class="check exCheck"><input type="checkbox" ${checked} onchange="toggleExercise('${safeKey}',this.checked)"><span><b>${x[0]}</b><div class="small">${x[1]}</div></span></div>`;
+ }).join('');
+ updateWorkoutScore(list);
+}
+function toggleExercise(name,val){
+ if(!data.exerciseChecks[today()]) data.exerciseChecks[today()]={};
+ data.exerciseChecks[today()][name]=val;
+ persist();
+ updateWorkoutScore(getExercises(document.getElementById('dayType').value));
+ renderExerciseHistory();
+}
+function updateWorkoutScore(list){
+ const checks=data.exerciseChecks[today()]||{};
+ const total=list.length, done=list.filter(x=>checks[x[0]]).length;
+ document.getElementById('workoutScore').textContent=`${done}/${total} 完了`;
+}
+function renderExerciseHistory(){
+ const dateSet=new Set([...Object.keys(data.types||{}), ...Object.keys(data.exerciseChecks||{})]);
+ const dates=Array.from(dateSet).sort().reverse().slice(0,30);
+ document.getElementById('exerciseHistory').innerHTML=dates.map(d=>{
+  const type=data.types[d]||autoDayType(d);
+  const list=getExercises(type);
+  const checks=data.exerciseChecks[d]||{};
+  const done=list.filter(x=>checks[x[0]]).length;
+  return `<div class="hist"><span>${fmtDate(d)}・${typeLabel(type)}</span><b>${done}/${list.length} 完了</b></div>`;
+ }).join('')||'<div class="small" style="padding:10px 0">まだ記録がありません。</div>';
 }
 function render(){
  const ws=data.weights; const latest=ws.length?ws[ws.length-1].weight:null; const start=ws.length?ws[0].weight:72;
@@ -272,15 +335,68 @@ function render(){
  document.getElementById('history').innerHTML=ws.slice().reverse().map(x=>`<div class="hist"><span>${x.date}</span><b>${x.weight.toFixed(1)}kg</b></div>`).join('')||'<div class="small" style="padding:10px 0">まだ記録がありません。</div>';
  drawChart();
 }
+function fmtDate(d){const p=d.split('-');return p[1]+'/'+p[2]}
+function xLabelStep(n){return Math.max(1,Math.ceil(n/6))}
 function drawChart(){
  const c=document.getElementById('chart'),ctx=c.getContext('2d');ctx.clearRect(0,0,c.width,c.height);
  const ws=data.weights;if(ws.length<1)return;
  const vals=ws.map(x=>x.weight), min=Math.min(...vals,62)-1,max=Math.max(...vals,72)+1;
- const pad=25,W=c.width-pad*2,H=c.height-pad*2;
- ctx.strokeStyle='#ddd';ctx.beginPath();ctx.moveTo(pad,pad);ctx.lineTo(pad,pad+H);ctx.lineTo(pad+W,pad+H);ctx.stroke();
+ const padL=34,padR=8,padT=10,padB=20,W=c.width-padL-padR,H=c.height-padT-padB;
+ ctx.font='10px -apple-system,BlinkMacSystemFont,sans-serif';
+ for(let t=0;t<=4;t++){
+  const frac=t/4, y=padT+H*(1-frac), val=min+(max-min)*frac;
+  ctx.strokeStyle='#eee';ctx.beginPath();ctx.moveTo(padL,y);ctx.lineTo(padL+W,y);ctx.stroke();
+  ctx.fillStyle='#999';ctx.textAlign='right';ctx.textBaseline='middle';ctx.fillText(val.toFixed(1),padL-6,y);
+ }
+ ctx.strokeStyle='#ddd';ctx.beginPath();ctx.moveTo(padL,padT);ctx.lineTo(padL,padT+H);ctx.lineTo(padL+W,padT+H);ctx.stroke();
  ctx.strokeStyle='#171717';ctx.lineWidth=3;ctx.beginPath();
- vals.forEach((v,i)=>{const x=pad+(vals.length===1?W/2:i/(vals.length-1)*W),y=pad+(max-v)/(max-min)*H;i?ctx.lineTo(x,y):ctx.moveTo(x,y)});ctx.stroke();
- ctx.fillStyle='#171717';vals.forEach((v,i)=>{const x=pad+(vals.length===1?W/2:i/(vals.length-1)*W),y=pad+(max-v)/(max-min)*H;ctx.beginPath();ctx.arc(x,y,4,0,Math.PI*2);ctx.fill()});
+ vals.forEach((v,i)=>{const x=padL+(vals.length===1?W/2:i/(vals.length-1)*W),y=padT+(max-v)/(max-min)*H;i?ctx.lineTo(x,y):ctx.moveTo(x,y)});ctx.stroke();
+ ctx.fillStyle='#171717';vals.forEach((v,i)=>{const x=padL+(vals.length===1?W/2:i/(vals.length-1)*W),y=padT+(max-v)/(max-min)*H;ctx.beginPath();ctx.arc(x,y,4,0,Math.PI*2);ctx.fill()});
+ ctx.fillStyle='#999';ctx.textAlign='center';ctx.textBaseline='top';
+ const step=xLabelStep(ws.length);
+ ws.forEach((w,i)=>{if(i%step!==0 && i!==ws.length-1)return; const x=padL+(vals.length===1?W/2:i/(vals.length-1)*W); ctx.fillText(fmtDate(w.date),x,padT+H+6)});
+ drawNutritionChart();
+}
+function dailyNutritionTotals(){
+ const totals={};
+ Object.keys(data.foodItems||{}).forEach(date=>{
+  const list=data.foodItems[date]||[];
+  if(!list.length) return;
+  const cal=Math.round(list.reduce((s,x)=>s+(x.cal||0),0));
+  const pro=Math.round(list.reduce((s,x)=>s+(x.pro||0),0)*10)/10;
+  totals[date]={cal,pro};
+ });
+ return totals;
+}
+function drawNutritionChart(){
+ const c=document.getElementById('nutriChart'),ctx=c.getContext('2d');ctx.clearRect(0,0,c.width,c.height);
+ const totals=dailyNutritionTotals();
+ const dates=Object.keys(totals).sort();
+ if(dates.length<1){ctx.fillStyle='#999';ctx.font='13px -apple-system,sans-serif';ctx.textAlign='left';ctx.textBaseline='alphabetic';ctx.fillText('まだ記録がありません',20,c.height/2);return;}
+ const cals=dates.map(d=>totals[d].cal), pros=dates.map(d=>totals[d].pro);
+ const maxCal=Math.max(...cals,1800)*1.15, maxPro=Math.max(...pros,150)*1.15;
+ const padL=38,padR=36,padT=10,padB=20,W=c.width-padL-padR,H=c.height-padT-padB;
+ ctx.font='10px -apple-system,BlinkMacSystemFont,sans-serif';
+ for(let t=0;t<=4;t++){
+  const frac=t/4, y=padT+H*(1-frac);
+  ctx.strokeStyle='#eee';ctx.beginPath();ctx.moveTo(padL,y);ctx.lineTo(padL+W,y);ctx.stroke();
+  ctx.fillStyle='#171717';ctx.textAlign='right';ctx.textBaseline='middle';ctx.fillText(Math.round(maxCal*frac),padL-6,y);
+  ctx.fillStyle='#287a4b';ctx.textAlign='left';ctx.fillText(Math.round(maxPro*frac),padL+W+6,y);
+ }
+ ctx.strokeStyle='#ddd';ctx.beginPath();ctx.moveTo(padL,padT);ctx.lineTo(padL,padT+H);ctx.lineTo(padL+W,padT+H);ctx.stroke();
+ const barW=Math.max(6,Math.min(28,(W/dates.length)*0.5));
+ dates.forEach((d,i)=>{
+  const x=padL+(dates.length===1?W/2:i/(dates.length-1)*W);
+  const barH=(cals[i]/maxCal)*H;
+  ctx.fillStyle='#171717';ctx.fillRect(x-barW/2, padT+H-barH, barW, barH);
+ });
+ ctx.strokeStyle='#287a4b';ctx.lineWidth=3;ctx.beginPath();
+ dates.forEach((d,i)=>{const x=padL+(dates.length===1?W/2:i/(dates.length-1)*W),y=padT+H-(pros[i]/maxPro)*H;i?ctx.lineTo(x,y):ctx.moveTo(x,y)});ctx.stroke();
+ ctx.fillStyle='#287a4b';
+ dates.forEach((d,i)=>{const x=padL+(dates.length===1?W/2:i/(dates.length-1)*W),y=padT+H-(pros[i]/maxPro)*H;ctx.beginPath();ctx.arc(x,y,4,0,Math.PI*2);ctx.fill()});
+ ctx.fillStyle='#999';ctx.textAlign='center';ctx.textBaseline='top';
+ const step=xLabelStep(dates.length);
+ dates.forEach((d,i)=>{if(i%step!==0 && i!==dates.length-1)return; const x=padL+(dates.length===1?W/2:i/(dates.length-1)*W); ctx.fillText(fmtDate(d),x,padT+H+6)});
 }
 function resetAll(){if(confirm('記録を全部消しますか？')){localStorage.removeItem(KEY);location.reload()}}
 loadToday();render();
